@@ -1,0 +1,103 @@
+-- [SQL] DATA EXPLORATION - COVID-19
+-- Select the data we are going to be looking at
+select location, date, total_cases, new_cases, total_deaths, population
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+order by 1, 2;
+
+-- Looking at Total Cases vs. Total Deaths (% of Infected who died) in the US
+-- shows the likelihood of dying if infected in the US by date
+select location, date, total_cases, total_deaths, (total_deaths/total_cases)*100 as DeathPercentage
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+where location = 'United States'
+order by 1, 2;
+
+-- Looking at Total cases v. Population in the US
+select location, date, total_cases, total_deaths, (total_deaths/total_cases)*100 as DeathPercentage
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+where location = 'United States'
+order by 1, 2;
+
+-- Looking at countries with the highest Infection Rate compared to Population
+-- Shows what % of population was infected by country
+select location, population, MAX(total_cases) as HighestInfectionCount, MAX((total_cases)/population)*100 as InfectionPercentage
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+GROUP BY location, population
+order by 4 DESC;
+
+-- Looking at countries with the highest Death Count 
+select location, MAX(total_deaths) as TotalDeathCount
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+GROUP BY location
+order by TotalDeathCount desc;
+-- This returns unwanted results for "World", along with "Asia", "Africa" and other continents, we just want results per country. 
+-- We notice in the data that the continent is listed as location when the continent value is null, so we use a Where to filter these out
+select location, MAX(total_deaths) as TotalDeathCount
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+where continent is not null
+GROUP BY location
+order by TotalDeathCount desc;
+
+-- Looking at continents with highest Death Count
+select continent, MAX(total_deaths) as TotalDeathCount
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+where continent is not null
+GROUP BY continent
+order by TotalDeathCount desc;
+
+
+-- Looking at global deaths and new cases per day to find Global Daily Death Percentage
+select date, SUM(new_cases) as GlobalCases, SUM(new_deaths) as GlobalDeaths, (SUM(new_deaths)/SUM(new_cases))*100 AS GlobalDeathPercentage
+from `sql-exploration-covid-deaths.CovidDeaths.deaths`
+where continent is not null
+GROUP BY date
+order by date;
+
+--Looking at Total Population vs. Vaccination
+SELECT dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations, SUM(vac.new_vaccinations) OVER (PARTITION BY dea.location ORDER BY dea.location, dea.date) AS RollingTotalVaccinations
+FROM `sql-exploration-covid-deaths.CovidDeaths.deaths` dea
+  JOIN `sql-exploration-covid-deaths.CovidVaccinations.vaccinations` vac
+   ON dea.location = vac.location and dea.date = vac.date
+where dea.continent is not null
+order by 2, 3;
+-- We used "dea" and "vac" to rename the locations of the data so we could assign the JOIN ON more easily. The ON tells SQL that to match up the date and location for both --tables and returns all the columns from both tables in the output
+-- We did the SUM of new vaccinations OVER (partition by) location and date, so we are summing new_vaccinations per date per country to give the total number of vaccinations --in each location by date, which increases day over day, AKA a Rolling Count
+
+-- Now we'll use a CTE to look at the RollingTotalVaccinations vs. population to see what % of the population is vaxxed
+WITH PopvsVax AS (SELECT continent, location, date, population, new_vaccinations, RollingTotalVaccinations FROM (SELECT dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations, SUM(vac.new_vaccinations) OVER (PARTITION BY dea.location ORDER BY dea.location, dea.date) AS RollingTotalVaccinations
+  FROM `sql-exploration-covid-deaths.CovidDeaths.deaths` dea
+  JOIN `sql-exploration-covid-deaths.CovidVaccinations.vaccinations` vac
+   ON dea.location = vac.location and dea.date = vac.date
+  where dea.continent is not null))
+
+SELECT *, (RollingTotalVaccinations/population)*100 AS RollingPercentVaxxed
+From PopvsVax;
+--The number of CTE columns after WITH must be the same as your SELECT statement, also BigQuery has special WITH syntax i.e. WITH temptable AS (SELECT column1, column2 FROM table1) *indent* SELECT column1 FROM temptable
+
+-- Now we'll create a temp table to store the old columns with the PercentPopulationVaccinated. We have created the empty table but BigQuery free version does not allow some DML such as INSERT
+Drop table if exists sql-exploration-covid-deaths.CovidDeaths.PercentPopulationVaccinated;
+Create table sql-exploration-covid-deaths.CovidDeaths.PercentPopulationVaccinated
+(continent string,
+  location string,
+  date datetime,
+  population integer,
+  new_vaccinations integer,
+  RollingTotalVaccinations integer);
+INSERT INTO sql-exploration-covid-deaths.CovidDeaths.PercentPopulationVaccinated
+  (SELECT dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations, SUM(vac.new_vaccinations) OVER (PARTITION BY dea.location ORDER BY dea.location, dea. date) AS RollingTotalVaccinations
+  FROM `sql-exploration-covid-deaths.CovidDeaths.deaths` dea
+  JOIN `sql-exploration-covid-deaths.CovidVaccinations.vaccinations` vac
+   ON dea.location = vac.location and dea.date = vac.date
+  where dea.continent is not null);
+SELECT *, (RollingTotalVaccinations/population)*100 AS RollingPercentVaxxed
+From sql-exploration-covid-deaths.CovidDeaths.PercentPopulationVaccinated;
+
+-- Lets try to create a View instead
+Drop table if exists sql-exploration-covid-deaths.CovidDeaths.PercentPopulationVaccinated;
+Create view sql-exploration-covid-deaths.CovidDeaths.PercentPopulationVaccinated AS
+(SELECT dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations, SUM(vac.new_vaccinations) OVER (PARTITION BY dea.location ORDER BY dea.location, dea. date) AS RollingTotalVaccinations
+  FROM `sql-exploration-covid-deaths.CovidDeaths.deaths` dea
+  JOIN `sql-exploration-covid-deaths.CovidVaccinations.vaccinations` vac
+   ON dea.location = vac.location and dea.date = vac.date
+  where dea.continent is not null);
+  -- The view loaded successfully and we can now query it
+  SELECT * FROM `sql-exploration-covid-deaths.CovidDeaths.PercentPopulationVaccinated` LIMIT 1000
